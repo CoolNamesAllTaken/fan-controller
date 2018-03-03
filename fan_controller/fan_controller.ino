@@ -17,7 +17,7 @@ DHT dht(DHT_PIN, DHT_TYPE); // set DHT sensor
 ClickEncoder* encoder;
 
 int setTemp = 30; // set temperature [deg. C]
-char* mode = "ON";
+char* mode = " ON";
 
 void timerIsr() {
 	encoder->service();
@@ -31,7 +31,7 @@ void setup()
 
 	encoder = new ClickEncoder(ENCODER_PIN_A, ENCODER_PIN_B, ENCODER_PIN_BTN, ENCODER_STEPS_PER_NOTCH);
 
-	Timer1.initialize(1000);
+	Timer1.initialize(500);
 	Timer1.attachInterrupt(timerIsr);
 
 	dht.begin(); // initialize DHT sensor
@@ -51,12 +51,13 @@ void loop()
 void readEncoder() {
 	setTemp += (int)encoder->getValue(); // update set temp from encoder scroll
 	if (setTemp < 0) setTemp = 0;
+	else if (setTemp > 99) setTemp = 99;
 
 	// update controller mode from encoder click
 	ClickEncoder::Button b = encoder->getButton();
 	if (b == ClickEncoder::Clicked) {
-		if (mode == "ON ") mode = "OFF";
-		else mode = "ON ";
+		if (mode == " ON") mode = "OFF";
+		else mode = " ON";
 	}
 }
 
@@ -64,16 +65,12 @@ void drawLCD(float humidity, float temp) {
 	lcd.setCursor(0,0);
 	char topLine[16];
 
-	char tempString[6]; // temperature string
-	dtostrf(temp,1, 1, tempString); // min length 1 char, 1 decimal place, write into tempString
-	sprintf(topLine, "%s %cC Mode: %.3s", tempString, (char)0xDF, mode); // adds a degrees char
+	sprintf(topLine, "%.2d%cC   Set: %.2d%cC", (int)temp, (char)0xDF, setTemp, (char)0xDF); // adds a degrees char
 	lcd.print(topLine);
 
 	lcd.setCursor(0,1); // col 0, row 1
 	char bottomLine[16];
 
-	char humidityString[6];
-	dtostrf(humidity, 1, 1, humidityString);
-	sprintf(bottomLine, "%s %c  %.2d", humidityString, (char)37, setTemp); // adds a % char
+	sprintf(bottomLine, "%.2d%c    Mode: %.3s", (int)humidity, (char)37, mode); // adds a % char
 	lcd.print(bottomLine);
 }
