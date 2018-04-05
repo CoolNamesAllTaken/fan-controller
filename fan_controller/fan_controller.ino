@@ -28,7 +28,6 @@ void timerIsr() {
 void setup()
 {
 	pinMode(MOSFET_PIN, OUTPUT);
-	digitalWrite(MOSFET_PIN, HIGH);
 
 	lcd.init(); // initialize the lcd
 	lcd.backlight();
