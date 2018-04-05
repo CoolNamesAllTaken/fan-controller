@@ -12,6 +12,8 @@
 #define ENCODER_PIN_BTN A2
 #define ENCODER_STEPS_PER_NOTCH 1
 
+#define MOSFET_PIN 10 // output pin connected to gate of N-channel MOSFET
+
 LiquidCrystal_I2C lcd(0x27,16,2); // set the LCD address to 0x27 for a 16 chars and 2 line display
 DHT dht(DHT_PIN, DHT_TYPE); // set DHT sensor
 ClickEncoder* encoder;
@@ -25,6 +27,9 @@ void timerIsr() {
 
 void setup()
 {
+	pinMode(MOSFET_PIN, OUTPUT);
+	digitalWrite(MOSFET_PIN, HIGH);
+
 	lcd.init(); // initialize the lcd
 	lcd.backlight();
 	lcd.setCursor(0,0);
@@ -43,6 +48,16 @@ void loop()
 	float humidity = dht.readHumidity();
 	float temp = dht.readTemperature();
 	// TODO: handle isnan(h) and isnan(t) errors
+
+	if (mode == " ON") {
+		if (temp >= setTemp) {
+			digitalWrite(MOSFET_PIN, HIGH); // turn on fan
+		} else {
+			digitalWrite(MOSFET_PIN, LOW); // turn off fan
+		}
+	} else {
+		digitalWrite(MOSFET_PIN, LOW); // turn off fan
+	}
 
 	readEncoder();
 	drawLCD(humidity, temp);
