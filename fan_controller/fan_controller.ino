@@ -26,9 +26,9 @@
 
 #define NUM_PARAMS 5 // P, I, D, Scaler, Time Interval
 #define TEMP_CONTROLLER_PID_INCREMENT 0.1 // add / subtract
-#define TEMP_CONTROLLER_TIME_INTERVAL_INCREMENT 500 // add / subtract
+#define TEMP_CONTROLLER_TIME_INTERVAL_INCREMENT 1 // add / subtract seconds
 
-#define TEMP_CONTROLLER_MAX_CUM_ERROR 1000
+// #define TEMP_CONTROLLER_MAX_CUM_ERROR 10
 
 LiquidCrystal_I2C lcd(0x27,16,2); // set the LCD address to 0x27 for a 16 chars and 2 line display
 DHT dht(DHT_PIN, DHT_TYPE); // set DHT sensor
@@ -50,7 +50,7 @@ float tempControllerP = 0.0f;
 float tempControllerI = 0.0f;
 float tempControllerD = 0.0f;
 
-int tempControllerTimeInterval; // in milliseconds
+int tempControllerTimeInterval; // in seconds
 float tempControllerResponseScaler; // scales the response to avoid bottoming out
 
 // Params menu variables
@@ -66,10 +66,10 @@ void timerIsr() {
 void setup()
 {
 	Serial.begin(9600); // for debugging
-	digitalWrite(MOSFET_PIN, LOW); // stop fan from turning on
 
 	// Set PWM fan control on timer 2, pin 3 (OC2B) to not mess with timer 1
 	pinMode(MOSFET_PIN, OUTPUT);
+	digitalWrite(MOSFET_PIN, LOW); // stop fan from turning on
 	TCCR2A = 0; // clear first settings register for timer 2
 	TCCR2B = 0; // clear second settings register for timer 2
 	TCCR2A = _BV(WGM21) | _BV(WGM20) | _BV(COM2B1); // | _BV(COM2A1)
@@ -121,22 +121,23 @@ void loop()
 void controlFan(float humidity, float temp) {
 	if (mode == "OFF" || temp < setTemp) {
 		digitalWrite(MOSFET_PIN, LOW); // turn off fan
+		cumTempErr = 0; // reset temp error integral
 	} else {
 		// mode is ON or SET and fan is needed
-		int tempErr = temp - setTemp;
-		
-		if (millis() - lastErrMillis >= tempControllerTimeInterval) {
+		if (millis() - lastErrMillis >= tempControllerTimeInterval * 1000) {
 			// update integral and derivative error every time interval
+			int tempErr = temp - setTemp;
 			cumTempErr += tempErr;
-			if (cumTempErr > TEMP_CONTROLLER_MAX_CUM_ERROR) cumTempErr = TEMP_CONTROLLER_MAX_CUM_ERROR;
+			// if (cumTempErr > TEMP_CONTROLLER_MAX_CUM_ERROR) cumTempErr = TEMP_CONTROLLER_MAX_CUM_ERROR;
 			dTempErr = tempErr - oldTempErr;
 			oldTempErr = tempErr;
 			lastErrMillis = millis();
+			float tempErrVal = tempErr * tempControllerP + cumTempErr * tempControllerI + dTempErr * tempControllerD;
+			float pwmVal = tempErrVal * tempControllerResponseScaler;
+			if (pwmVal > 255) pwmVal = 255;
+			analogWrite(MOSFET_PIN, (byte)pwmVal);
+			Serial.println(pwmVal);
 		}
-
-		float tempErrVal = tempErr * tempControllerP + cumTempErr * tempControllerI + dTempErr * tempControllerD;
-		analogWrite(MOSFET_PIN, (byte)(255 * tempErrVal * tempControllerResponseScaler));
-		Serial.println(tempErrVal);
 	}
 		
 }
@@ -186,7 +187,7 @@ void updateParams() {
 		dtostrf(tempControllerI, 3, 1, iStr);
 		char dStr[4];
 		dtostrf(tempControllerD, 3, 1, dStr);
-		sprintf(topLine, "P%s I%s D%s", pStr, iStr, dStr);
+		sprintf(topLine, "P%s I%s D%s        ", pStr, iStr, dStr);
 		lcd.print(topLine);
 
 		// Print response scaler and time interval
@@ -194,7 +195,7 @@ void updateParams() {
 		char bottomLine[16];
 		char scalerStr[6];
 		dtostrf(tempControllerResponseScaler, 5, 3, scalerStr);
-		sprintf(bottomLine, "SCL%s INT%d", scalerStr, tempControllerTimeInterval);
+		sprintf(bottomLine, "SCL%s INT%d        ", scalerStr, tempControllerTimeInterval);
 		lcd.print(bottomLine);
 
 		modifiedParam = false; // reset draw params flag
@@ -239,7 +240,7 @@ void updateParams() {
 			lcd.noBlink();
 		}
 	} else if (b == ClickEncoder::DoubleClicked) {
-		mode = "ON";
+		mode = " ON";
 		lcd.clear();
 	}
 }
