@@ -28,6 +28,8 @@
 #define TEMP_CONTROLLER_PID_INCREMENT 0.1 // add / subtract
 #define TEMP_CONTROLLER_TIME_INTERVAL_INCREMENT 500 // add / subtract
 
+#define TEMP_CONTROLLER_MAX_CUM_ERROR 1000
+
 LiquidCrystal_I2C lcd(0x27,16,2); // set the LCD address to 0x27 for a 16 chars and 2 line display
 DHT dht(DHT_PIN, DHT_TYPE); // set DHT sensor
 ClickEncoder* encoder;
@@ -64,6 +66,7 @@ void timerIsr() {
 void setup()
 {
 	Serial.begin(9600); // for debugging
+	digitalWrite(MOSFET_PIN, LOW); // stop fan from turning on
 
 	// Set PWM fan control on timer 2, pin 3 (OC2B) to not mess with timer 1
 	pinMode(MOSFET_PIN, OUTPUT);
@@ -116,26 +119,27 @@ void loop()
 }
 
 void controlFan(float humidity, float temp) {
-	if (mode == " ON" && temp > setTemp) {
-		// only work when enclosure is too hot
+	if (mode == "OFF" || temp < setTemp) {
+		digitalWrite(MOSFET_PIN, LOW); // turn off fan
+	} else {
+		// mode is ON or SET and fan is needed
 		int tempErr = temp - setTemp;
 		
 		if (millis() - lastErrMillis >= tempControllerTimeInterval) {
 			// update integral and derivative error every time interval
 			cumTempErr += tempErr;
+			if (cumTempErr > TEMP_CONTROLLER_MAX_CUM_ERROR) cumTempErr = TEMP_CONTROLLER_MAX_CUM_ERROR;
 			dTempErr = tempErr - oldTempErr;
 			oldTempErr = tempErr;
 			lastErrMillis = millis();
 		}
 
 		float tempErrVal = tempErr * tempControllerP + cumTempErr * tempControllerI + dTempErr * tempControllerD;
-		TEMP_CONTROLLER_PWM_REGISTER = (byte)(255 * tempErrVal * tempControllerResponseScaler);
+		analogWrite(MOSFET_PIN, (byte)(255 * tempErrVal * tempControllerResponseScaler));
 		Serial.println(tempErrVal);
-	} else if (mode == "OFF") {
-		TEMP_CONTROLLER_PWM_REGISTER = 0; // turn off fan
 	}
+		
 }
-
 
 void updateThermostat(float humidity, float temp) {
 	// Draws LCD
