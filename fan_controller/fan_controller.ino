@@ -28,7 +28,8 @@
 #define TEMP_CONTROLLER_PID_INCREMENT 0.1 // add / subtract
 #define TEMP_CONTROLLER_TIME_INTERVAL_INCREMENT 1 // add / subtract seconds
 
-// #define TEMP_CONTROLLER_MAX_CUM_ERROR 10
+#define TEMP_CONTROLLER_NEUTRAL_PWM 120 // neutral duty cycle of fan pwm register
+#define TEMP_ERR_HISTORY_LENGTH 10 // number of time captures to use for I gain etc.
 
 LiquidCrystal_I2C lcd(0x27,16,2); // set the LCD address to 0x27 for a 16 chars and 2 line display
 DHT dht(DHT_PIN, DHT_TYPE); // set DHT sensor
@@ -38,9 +39,8 @@ int setTemp = 30; // set temperature [deg. C]
 char* mode = " ON";
 
 // Error variables used for PID control
-int cumTempErr = 0;
-int dTempErr = 0;
-int oldTempErr = 0;
+int tempErrHistory [TEMP_ERR_HISTORY_LENGTH];
+int tempErrHistoryInd = 0;
 
 // Last time (in milliseconds) that integral and derivative error were recorded
 unsigned long lastErrMillis = 0;
@@ -79,7 +79,7 @@ void setup()
 	TCCR2B = _BV(CS22) | _BV(CS21) | _BV(CS20);
 	// CS2 = 0b111 (prescale 1024)
 	// OCR2A = 50; // duty cycle register for channel A, not used
-	TEMP_CONTROLLER_PWM_REGISTER = 200; // duty cycle register for channel B, can be between 0 and 255 (inclusive)
+	TEMP_CONTROLLER_PWM_REGISTER = TEMP_CONTROLLER_NEUTRAL_PWM; // duty cycle register for channel B, can be between 0 and 255 (inclusive)
 
 	// Load gains for temperature controller
 	EEPROM.get(TEMP_CONTROLLER_P_ADDR, tempControllerP);
@@ -99,6 +99,8 @@ void setup()
 
 	dht.begin(); // initialize DHT sensor
 	lcd.clear();
+
+	zeroTempErrHistory();
 }
 
 void loop()
@@ -118,23 +120,59 @@ void loop()
 	}
 }
 
+void zeroTempErrHistory() {
+	for (int i = 0; i < TEMP_ERR_HISTORY_LENGTH; i++) {
+		tempErrHistory[i] = 0;
+	}
+}
+
+int sumTempErrHistory() {
+	int totalErr = 0;
+	for (int i = 0; i < TEMP_ERR_HISTORY_LENGTH; i++) {
+		totalErr += tempErrHistory[i];
+	}
+	return totalErr;
+}
+
+void setTempErr(tempErr) {
+	tempErrHistoryInd++;
+	if (tempErrHistoryInd >= TEMP_ERR_HISTORY_LENGTH)
+		tempErrHistoryInd = 0; // loop around
+	tempErrHistory[tempErrHistoryInd] = tempErr;
+}
+
+int getTempErr(tempErr) {
+	return tempErrHistory[tempErrHistoryInd];
+}
+
+int getDTempErr(tempErr) {
+	oldTempErrHistoryInd = tempErrHistoryInd - 1;
+	if (oldTempErrHistoryInd < 0)
+		oldTempErrHistoryInd = TEMP_ERR_HISTORY_LENGTH - 1;
+	return tempErrHistory[tempErrHistoryInd] - tempErrHistory[oldTempErrHistoryInd];
+}
+
+bool isActive() {
+	for (int i = 0; i < TEMP_ERR_HISTORY_LENGTH; i++) {
+		if (tempErrHistory[i] > 0) return true; // box has been hot, probably active
+	}
+	return false; // box has not been hot in history, probably inactive
+}
+
 void controlFan(float humidity, float temp) {
-	if (mode == "OFF" || temp < setTemp) {
+	if (mode == "OFF" || !isActive()) {
 		digitalWrite(MOSFET_PIN, LOW); // turn off fan
-		cumTempErr = 0; // reset temp error integral
+		zeroTempErrHistory();
 	} else {
 		// mode is ON or SET and fan is needed
 		if (millis() - lastErrMillis >= tempControllerTimeInterval * 1000) {
 			// update integral and derivative error every time interval
-			int tempErr = temp - setTemp;
-			cumTempErr += tempErr;
-			// if (cumTempErr > TEMP_CONTROLLER_MAX_CUM_ERROR) cumTempErr = TEMP_CONTROLLER_MAX_CUM_ERROR;
-			dTempErr = tempErr - oldTempErr;
-			oldTempErr = tempErr;
+			setTempErr(temp - setTemp);
 			lastErrMillis = millis();
-			float tempErrVal = tempErr * tempControllerP + cumTempErr * tempControllerI + dTempErr * tempControllerD;
-			float pwmVal = tempErrVal * tempControllerResponseScaler;
+			float tempErrVal = getTempErr() * tempControllerP + sumTempErrHistory() * tempControllerI + getDTempErr() * tempControllerD;
+			float pwmVal = TEMP_CONTROLLER_NEUTRAL_PWM + (tempErrVal * tempControllerResponseScaler);
 			if (pwmVal > 255) pwmVal = 255;
+			if (pwmVal < 0) pwmVal = 0;
 			analogWrite(MOSFET_PIN, (byte)pwmVal);
 			Serial.println(pwmVal);
 		}
