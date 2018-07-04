@@ -29,6 +29,7 @@
 #define TEMP_CONTROLLER_TIME_INTERVAL_INCREMENT 1 // add / subtract seconds
 
 #define TEMP_CONTROLLER_NEUTRAL_PWM 120 // neutral duty cycle of fan pwm register
+#define TEMP_CONTROLLER_MAX_PWM 255
 #define TEMP_ERR_HISTORY_LENGTH 10 // number of time captures to use for I gain etc.
 
 LiquidCrystal_I2C lcd(0x27,16,2); // set the LCD address to 0x27 for a 16 chars and 2 line display
@@ -73,12 +74,12 @@ void setup()
 	TCCR2A = 0; // clear first settings register for timer 2
 	TCCR2B = 0; // clear second settings register for timer 2
 	TCCR2A = _BV(WGM21) | _BV(WGM20) | _BV(COM2B1); // | _BV(COM2A1)
-	// WGM2 = 0b011 (timer 2 in fast pwm mode)
+	// WGM2 = 0b111 (timer 2 in fast pwm mode with OCR2A as TOP)
 	// COM2B = 0b10 (timer 2 channel b in non-inverting mode)
 	// COM2A = 0b10 (timer 2 channel a in non-inverting mode), not used
-	TCCR2B = _BV(CS22) | _BV(CS21) | _BV(CS20);
+	TCCR2B = _BV(WGM22) | _BV(CS21);
 	// CS2 = 0b111 (prescale 1024)
-	// OCR2A = 50; // duty cycle register for channel A, not used
+	OCR2A = TEMP_CONTROLLER_MAX_PWM; // TOP for timer 2, set to max val of OCR2B
 	TEMP_CONTROLLER_PWM_REGISTER = TEMP_CONTROLLER_NEUTRAL_PWM; // duty cycle register for channel B, can be between 0 and 255 (inclusive)
 
 	// Load gains for temperature controller
@@ -114,9 +115,12 @@ void loop()
 	if (mode == "SET") {
 		// PID parameter setting mode
 		updateParams();
-	} else {
+	} else if (mode == " ON" || mode == "OFF") {
 		// Normal thermostat mode
 		updateThermostat(humidity, temp);
+	} else {
+		// Show PID values for tuning
+		showValues();
 	}
 }
 
@@ -134,19 +138,19 @@ int sumTempErrHistory() {
 	return totalErr;
 }
 
-void setTempErr(tempErr) {
+void setTempErr(int tempErr) {
 	tempErrHistoryInd++;
 	if (tempErrHistoryInd >= TEMP_ERR_HISTORY_LENGTH)
 		tempErrHistoryInd = 0; // loop around
 	tempErrHistory[tempErrHistoryInd] = tempErr;
 }
 
-int getTempErr(tempErr) {
+int getTempErr() {
 	return tempErrHistory[tempErrHistoryInd];
 }
 
-int getDTempErr(tempErr) {
-	oldTempErrHistoryInd = tempErrHistoryInd - 1;
+int getDTempErr() {
+	int oldTempErrHistoryInd = tempErrHistoryInd - 1;
 	if (oldTempErrHistoryInd < 0)
 		oldTempErrHistoryInd = TEMP_ERR_HISTORY_LENGTH - 1;
 	return tempErrHistory[tempErrHistoryInd] - tempErrHistory[oldTempErrHistoryInd];
@@ -154,28 +158,41 @@ int getDTempErr(tempErr) {
 
 bool isActive() {
 	for (int i = 0; i < TEMP_ERR_HISTORY_LENGTH; i++) {
-		if (tempErrHistory[i] > 0) return true; // box has been hot, probably active
+		if (tempErrHistory[i] >= 0) return true; // box has been hot or zeroed, probably active
 	}
 	return false; // box has not been hot in history, probably inactive
+}
+
+void calcPIDs(float &pVal, float &iVal, float &dVal, float &tempErrVal, float &pwmVal) {
+	pVal = getTempErr() * tempControllerP;
+	iVal = sumTempErrHistory() * tempControllerI;
+	dVal = getDTempErr() * tempControllerD;
+	tempErrVal = pVal + iVal + dVal;
+	pwmVal = TEMP_CONTROLLER_NEUTRAL_PWM + (tempErrVal * tempControllerResponseScaler);
 }
 
 void controlFan(float humidity, float temp) {
 	if (mode == "OFF" || !isActive()) {
 		digitalWrite(MOSFET_PIN, LOW); // turn off fan
-		zeroTempErrHistory();
-	} else {
-		// mode is ON or SET and fan is needed
-		if (millis() - lastErrMillis >= tempControllerTimeInterval * 1000) {
-			// update integral and derivative error every time interval
-			setTempErr(temp - setTemp);
-			lastErrMillis = millis();
-			float tempErrVal = getTempErr() * tempControllerP + sumTempErrHistory() * tempControllerI + getDTempErr() * tempControllerD;
-			float pwmVal = TEMP_CONTROLLER_NEUTRAL_PWM + (tempErrVal * tempControllerResponseScaler);
-			if (pwmVal > 255) pwmVal = 255;
-			if (pwmVal < 0) pwmVal = 0;
+	}
+	
+	// mode is ON or SET and fan is needed
+	if (millis() - lastErrMillis >= tempControllerTimeInterval * 1000) {
+		// update integral and derivative error every time interval
+		setTempErr(temp - setTemp);
+		lastErrMillis = millis();
+		float pVal, iVal, dVal, tempErrVal, pwmVal;
+		calcPIDs(pVal, iVal, dVal, tempErrVal, pwmVal); // fill in PID calculations
+		if (pwmVal > TEMP_CONTROLLER_MAX_PWM) pwmVal = TEMP_CONTROLLER_MAX_PWM;
+		if (pwmVal < 0) pwmVal = 0;
+
+		if (isActive()) {
 			analogWrite(MOSFET_PIN, (byte)pwmVal);
-			Serial.println(pwmVal);
 		}
+		
+		char responseLine [30];
+		sprintf(responseLine, "P%d I%d D%d PWM%d", (int)pVal, (int)iVal, (int)dVal, (int)pwmVal);
+		Serial.println(responseLine);
 	}
 		
 }
@@ -278,6 +295,28 @@ void updateParams() {
 			lcd.noBlink();
 		}
 	} else if (b == ClickEncoder::DoubleClicked) {
+		mode = "VAL";
+		lcd.clear();
+	}
+}
+
+void showValues() {
+	float pVal, iVal, dVal, tempErrVal, pwmVal;
+	calcPIDs(pVal, iVal, dVal, tempErrVal, pwmVal);
+
+	// for PID tuning
+	lcd.setCursor(0,0);
+	char topLine[16];
+	sprintf(topLine, "P%d I%d D%d", (int)pVal, (int)iVal, (int)dVal);
+	lcd.print(topLine);
+
+	lcd.setCursor(0,1);
+	char bottomLine[16];
+	sprintf(bottomLine, "SUM%d PWM%d", (int)tempErrVal, (int)pwmVal);
+	lcd.print(bottomLine);
+
+		ClickEncoder::Button b = encoder->getButton();
+	if (b == ClickEncoder::DoubleClicked) {
 		mode = " ON";
 		lcd.clear();
 	}
