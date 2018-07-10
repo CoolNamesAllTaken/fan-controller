@@ -156,12 +156,12 @@ int getDTempErr() {
 	return tempErrHistory[tempErrHistoryInd] - tempErrHistory[oldTempErrHistoryInd];
 }
 
-bool isActive() {
-	for (int i = 0; i < TEMP_ERR_HISTORY_LENGTH; i++) {
-		if (tempErrHistory[i] >= 0) return true; // box has been hot or zeroed, probably active
-	}
-	return false; // box has not been hot in history, probably inactive
-}
+// bool isActive() {
+// 	for (int i = 0; i < TEMP_ERR_HISTORY_LENGTH; i++) {
+// 		if (tempErrHistory[i] >= 0) return true; // box has been hot or zeroed, probably active
+// 	}
+// 	return false; // box has not been hot in history, probably inactive
+// }
 
 void calcPIDs(float &pVal, float &iVal, float &dVal, float &tempErrVal, float &pwmVal) {
 	pVal = getTempErr() * tempControllerP;
@@ -172,7 +172,7 @@ void calcPIDs(float &pVal, float &iVal, float &dVal, float &tempErrVal, float &p
 }
 
 void controlFan(float humidity, float temp) {
-	if (mode == "OFF" || !isActive()) {
+	if (mode == "OFF") {
 		digitalWrite(MOSFET_PIN, LOW); // turn off fan
 	}
 	
@@ -186,9 +186,7 @@ void controlFan(float humidity, float temp) {
 		if (pwmVal > TEMP_CONTROLLER_MAX_PWM) pwmVal = TEMP_CONTROLLER_MAX_PWM;
 		if (pwmVal < 0) pwmVal = 0;
 
-		if (isActive()) {
-			analogWrite(MOSFET_PIN, (byte)pwmVal);
-		}
+		analogWrite(MOSFET_PIN, (byte)pwmVal);
 		
 		char responseLine [30];
 		sprintf(responseLine, "P%d I%d D%d PWM%d", (int)pVal, (int)iVal, (int)dVal, (int)pwmVal);
@@ -307,12 +305,12 @@ void showValues() {
 	// for PID tuning
 	lcd.setCursor(0,0);
 	char topLine[16];
-	sprintf(topLine, "P%d I%d D%d", (int)pVal, (int)iVal, (int)dVal);
+	sprintf(topLine, "P%d I%d D%d          ", (int)pVal, (int)iVal, (int)dVal);
 	lcd.print(topLine);
 
 	lcd.setCursor(0,1);
 	char bottomLine[16];
-	sprintf(bottomLine, "SUM%d PWM%d", (int)tempErrVal, (int)pwmVal);
+	sprintf(bottomLine, "SUM%d PWM%d          ", (int)tempErrVal, (int)pwmVal);
 	lcd.print(bottomLine);
 
 		ClickEncoder::Button b = encoder->getButton();
